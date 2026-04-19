@@ -13,6 +13,24 @@ class ServiceConfig(BaseSettings):
         description="MySQL 异步连接字符串"
     )
 
+    openai_api_key: str = Field(
+        ...,
+        alias="OPENAI_API_KEY",
+        description="OpenAI API 密钥"
+    )
+
+    openai_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        alias="OPENAI_BASE_URL",
+        description="OpenAI API 地址"
+    )
+
+    openai_model: str = Field(
+        default="gpt-4o-mini",
+        alias="OPENAI_MODEL",
+        description="OpenAI 模型名称"
+    )
+
 
 @lru_cache()
 def get_service_config() -> ServiceConfig:

@@ -135,3 +135,4 @@ requests
 aiohttp
 # 数据可视化
 matplotlib
+paddleocr~=3.4.1

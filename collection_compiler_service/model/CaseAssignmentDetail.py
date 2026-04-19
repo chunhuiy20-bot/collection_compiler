@@ -36,7 +36,7 @@ class CaseAssignmentDetail(BaseDBModel):
     entrusted_principal_balance = Column(Numeric(14, 2), nullable=True, comment="委案剩本金额")
     entrusted_total_claim = Column(Numeric(14, 2), nullable=True, comment="委案债权总额")
     disposal_type = Column(String(8), nullable=True, comment="处置方式(保全/散诉)")
-    case_status = Column(Integer, nullable=False, default=0, comment="案件状态:0待处理 1处理中 2处理已完成 3处理失败 -1警告缺失 -2严重缺失")
+    case_status = Column(Integer, nullable=False, default=0, comment="案件状态:0待处理 1处理中 2处理已完成 3处理失败 4缺少处理数据 -1警告缺失 -2严重缺失")
     case_followers = Column(
         MutableList.as_mutable(JSON),
         nullable=False,
@@ -44,6 +44,12 @@ class CaseAssignmentDetail(BaseDBModel):
         comment="案件跟进人数组",
     )
     file_hash = Column(String(128), nullable=True, comment="来源文件hash")
+
+    def __repr__(self):
+        return (
+            f"<CaseAssignmentDetail id={self.id} uid={self.uid} "
+            f"application_code={self.application_code} case_status={self.case_status}>"
+        )
 
     __table_args__ = (
         Index("idx_case_assign_uid", "uid"),

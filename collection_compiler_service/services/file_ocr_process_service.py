@@ -7,6 +7,7 @@ from collection_compiler_service.repository.CaseAssignmentDetailRepository impor
 from collection_compiler_service.services.file_ocr_service import file_ocr_service
 from collection_compiler_service.services.file_search_service import file_search_service
 from collection_compiler_service.services.ai_info_extraction_service import ai_info_extraction_service
+from collection_compiler_service.services.multimodal_service import multimodal_service
 
 logger = logging.getLogger("collection_compiler_service")
 
@@ -151,6 +152,83 @@ class FileOcrProcessService:
 
 
             # all_results.append(case_result)
+
+
+    async def process_by_file_hash_multimodal(self, file_hash: str) -> dict[str, Any]:
+        """使用多模态模型处理，识别身份证并提取信息"""
+        async with CaseAssignmentDetailRepository(db_name="collection_compiler") as repo:
+            from sqlalchemy import select, and_
+            from collection_compiler_service.model.CaseAssignmentDetail import CaseAssignmentDetail as M
+            stmt = select(M).where(and_(M.del_flag == 0, M.file_hash == file_hash, M.case_status <= 0))
+            result = await repo.db.execute(stmt)
+            pending = list(result.scalars().all())
+
+        if not pending:
+            return {"file_hash": file_hash, "pending_count": 0}
+
+        for case in pending:
+            file_paths: list[str] = []
+            found = file_search_service.find_files(case.application_code, case.uid)
+            for paths in found.values():
+                file_paths.extend(p for p in paths if not p.lower().endswith(".pdf"))
+
+            if not file_paths:
+                logger.warning(f"case_id={case.id} 未找到可处理文件，设置状态为 4")
+                async with CaseAssignmentDetailRepository(db_name="collection_compiler") as repo:
+                    from sqlalchemy import update
+                    from collection_compiler_service.model.CaseAssignmentDetail import CaseAssignmentDetail as M
+                    stmt = update(M).where(M.id == case.id).values(case_status=4)
+                    await repo.db.execute(stmt)
+                    await repo.db.commit()
+                continue
+
+            try:
+                async with CaseAssignmentDetailRepository(db_name="collection_compiler") as repo:
+                    from sqlalchemy import update
+                    from collection_compiler_service.model.CaseAssignmentDetail import CaseAssignmentDetail as M
+                    stmt = update(M).where(M.id == case.id).values(case_status=1)
+                    await repo.db.execute(stmt)
+                    await repo.db.commit()
+                logger.info(f"case_id={case.id} 多模态处理中，状态更新为 1")
+
+                extracted_info = await multimodal_service.extract_id_card_info(file_paths)
+                logger.info(f"case_id={case.id} 多模态提取信息: {extracted_info}")
+
+                if case.id and any(extracted_info.values()):
+                    async with CaseAssignmentDetailRepository(db_name="collection_compiler") as repo:
+                        from sqlalchemy import select
+                        from collection_compiler_service.model.CaseAssignmentDetail import CaseAssignmentDetail as M
+                        result = await repo.db.execute(select(M).where(M.id == case.id))
+                        record = result.scalar_one_or_none()
+                        if record:
+                            if extracted_info.get('name'):
+                                record.debtor_name = extracted_info['name']
+                            if extracted_info.get('household_address'):
+                                record.household_address = extracted_info['household_address']
+                            if extracted_info.get('province'):
+                                record.province = extracted_info['province']
+                            if extracted_info.get('city'):
+                                record.city = extracted_info['city']
+                            await repo.update_by_id(record)
+
+                async with CaseAssignmentDetailRepository(db_name="collection_compiler") as repo:
+                    from sqlalchemy import update
+                    from collection_compiler_service.model.CaseAssignmentDetail import CaseAssignmentDetail as M
+                    stmt = update(M).where(M.id == case.id).values(case_status=2)
+                    await repo.db.execute(stmt)
+                    await repo.db.commit()
+                logger.info(f"case_id={case.id} 多模态处理完成，状态更新为 2")
+
+            except Exception as e:
+                logger.error(f"case_id={case.id} 多模态处理失败: {e}")
+                async with CaseAssignmentDetailRepository(db_name="collection_compiler") as repo:
+                    from sqlalchemy import update
+                    from collection_compiler_service.model.CaseAssignmentDetail import CaseAssignmentDetail as M
+                    stmt = update(M).where(M.id == case.id).values(case_status=3)
+                    await repo.db.execute(stmt)
+                    await repo.db.commit()
+
+        return {"file_hash": file_hash, "pending_count": len(pending)}
 
 
 file_ocr_process_service = FileOcrProcessService()

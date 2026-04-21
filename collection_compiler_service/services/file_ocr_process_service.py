@@ -191,25 +191,16 @@ class FileOcrProcessService:
                     await repo.db.commit()
                 logger.info(f"case_id={case.id} 多模态处理中，状态更新为 1")
 
-                extracted_info = await multimodal_service.extract_id_card_info(file_paths)
-                logger.info(f"case_id={case.id} 多模态提取信息: {extracted_info}")
+                raw = await multimodal_service.extract_id_card_info(file_paths)
+                logger.info(f"case_id={case.id} 多模态提取信息: {raw}")
 
-                if case.id and any(extracted_info.values()):
-                    async with CaseAssignmentDetailRepository(db_name="collection_compiler") as repo:
-                        from sqlalchemy import select
-                        from collection_compiler_service.model.CaseAssignmentDetail import CaseAssignmentDetail as M
-                        result = await repo.db.execute(select(M).where(M.id == case.id))
-                        record = result.scalar_one_or_none()
-                        if record:
-                            if extracted_info.get('name'):
-                                record.debtor_name = extracted_info['name']
-                            if extracted_info.get('household_address'):
-                                record.household_address = extracted_info['household_address']
-                            if extracted_info.get('province'):
-                                record.province = extracted_info['province']
-                            if extracted_info.get('city'):
-                                record.city = extracted_info['city']
-                            await repo.update_by_id(record)
+                case_result = {
+                    "case_id": case.id,
+                    "application_code": case.application_code,
+                    "uid": case.uid,
+                    "files": [{"file_path": path, "ocr_text": content} for path, content in raw.items()]
+                }
+                await self._extract_and_log_info(case_result)
 
                 async with CaseAssignmentDetailRepository(db_name="collection_compiler") as repo:
                     from sqlalchemy import update

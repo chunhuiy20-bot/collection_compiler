@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 import shutil
 import zipfile
 from pathlib import Path
@@ -31,15 +30,43 @@ class ChunkUploadService:
     async def init_upload(self, upload_id: str, filename: str, total_chunks: int, file_hash: str | None = None) -> dict[str, Any]:
         self.init_dirs()
 
+        print(f"zip_hash:{file_hash}")
+
+
         # 秒传：hash 命中已有文件
         if file_hash:
             repo = FileUploadRecordRepository(db_name="collection_compiler")
             async with repo as repository:
                 existing = await repository.find_by_hash(file_hash)
-            if existing and Path(existing.file_path).exists():
-                logger.info("秒传命中: hash=%s -> %s", file_hash, existing.file_path)
-                return {"upload_id": upload_id, "filename": filename, "file_path": existing.file_path, "instant": True}
+                print(f"ces:{existing.file_path}")
+                print(Path(existing.file_path).exists())
+                print(Path(existing.file_path))
+            if existing and existing.file_path:
 
+                # 跨平台路径修复
+                normalized_path = existing.file_path.replace("\\", "/")
+
+                path_obj = Path(normalized_path)
+
+                # print(f"数据库路径: {existing.file_path}")
+                # print(f"标准化路径: {normalized_path}")
+                # print(f"绝对路径: {path_obj.resolve()}")
+                # print(f"文件是否存在: {path_obj.exists()}")
+
+                # 文件真实存在
+                if path_obj.exists():
+                    logger.info(
+                        "秒传命中: hash=%s -> %s",
+                        file_hash,
+                        normalized_path
+                    )
+
+                    return {
+                        "upload_id": upload_id,
+                        "filename": filename,
+                        "file_path": normalized_path,
+                        "instant": True
+                    }
         upload_dir = TMP_DIR / upload_id
 
         # 已存在：断点续传，返回已上传的分片列表

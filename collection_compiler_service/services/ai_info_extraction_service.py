@@ -37,24 +37,59 @@ class AiInfoExtractionService:
             ExtractedInfo: 提取的信息对象
         """
         try:
-            prompt = f"""请从以下 OCR 识别的文本中提取以下信息：
-1. 人名
-2. 户籍地（完整地址）
-3. 户籍地的省份
-4. 户籍地的市
+            # prompt = f"""
+            # 请从以下 OCR 识别的文本中提取以下信息：
+            #     1. 人名
+            #     2. 户籍地（完整地址）
+            #     3. 户籍地的省份
+            #     4. 户籍地的市
+            #
+            # OCR 文本：
+            # {ocr_text}
+            #
+            # 请以 JSON 格式返回，格式如下：
+            # {{
+            #     "name": "张三",
+            #     "household_address": "广东省深圳市南山区某某街道",
+            #     "province": "广东省",
+            #     "city": "深圳市"
+            # }}
+            #
+            # 如果某个字段无法提取，请返回 null。"""
 
-OCR 文本：
-{ocr_text}
+            prompt=f"""
+            请从以下 OCR 识别文本中提取中国户籍信息。
+            
+            需要提取：
+            1. 人名
+            2. 户籍地完整地址
+            3. province：
+               - 表示一级行政区
+               - 包括：省、自治区、直辖市、特别行政区
+            4. city：
+               - 表示二级行政区
+               - 包括：地级市、自治州、地区、盟
+               - 对于直辖市，city 与 province 保持一致
+            
+            注意：
+            - 不要猜测不存在的信息
+            - 允许根据中国行政区常识进行合理纠错
+            - 如果无法确定字段，请返回 null
+            - 只返回 JSON，不要输出其他内容
+            
+            OCR 文本：
+            {ocr_text}
+            
+            请严格按照以下 JSON 格式返回：
+            
+            {{
+                "name": "张三",
+                "household_address": "广东省深圳市南山区某某街道",
+                "province": "广东省",
+                "city": "深圳市"
+            }}
+            """
 
-请以 JSON 格式返回，格式如下：
-{{
-    "name": "张三",
-    "household_address": "广东省深圳市南山区某某街道",
-    "province": "广东省",
-    "city": "深圳市"
-}}
-
-如果某个字段无法提取，请返回 null。"""
 
             response = await self.client.chat.completions.create(
                 model=self.model,

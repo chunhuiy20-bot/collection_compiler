@@ -17,8 +17,6 @@ router = CustomAPIRouter(
 
 @router.post("/process", summary="按 file_hash 处理待处理案件的 OCR 识别")
 async def process_ocr(file_hash: str, use_multimodal: bool = False) -> Result[Any]:
-    # print(file_hash)
-    # print(use_multimodal)
     if not file_hash:
         raise HTTPException(status_code=400, detail="file_hash 不能为空")
     if use_multimodal:

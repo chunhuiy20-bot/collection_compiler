@@ -153,7 +153,6 @@ class FileOcrProcessService:
 
             # all_results.append(case_result)
 
-
     async def process_by_file_hash_multimodal(self, file_hash: str) -> dict[str, Any]:
         """使用多模态模型处理，识别身份证并提取信息"""
         async with CaseAssignmentDetailRepository(db_name="collection_compiler") as repo:

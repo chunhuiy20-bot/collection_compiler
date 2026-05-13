@@ -31,6 +31,11 @@ class ServiceConfig(BaseSettings):
         description="OpenAI 模型名称"
     )
 
+    redis_host: str = Field(default="8.130.81.134", alias="REDIS_HOST")
+    redis_port: int = Field(default=6379, alias="REDIS_PORT")
+    redis_password: str = Field(default="137139yang@", alias="REDIS_PASSWORD")
+    redis_database: int = Field(default=3, alias="REDIS_DATABASE")
+
 
 @lru_cache()
 def get_service_config() -> ServiceConfig:

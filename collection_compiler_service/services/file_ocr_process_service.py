@@ -12,11 +12,13 @@ from collection_compiler_service.services.ai_info_extraction_service import ai_i
 from collection_compiler_service.services.file_ocr_service import file_ocr_service
 from collection_compiler_service.services.file_search_service import file_search_service
 from collection_compiler_service.services.multimodal_service import multimodal_service
+from collection_compiler_service.repository.OcrProgressRepository import ocr_progress_repository
 
 logger = logging.getLogger("collection_compiler_service")
 
 _process_pool = ProcessPoolExecutor(max_workers=1)
-_background_tasks: set = set()
+_background_tasks: dict[str, asyncio.Task] = {}
+_internal_tasks: set[asyncio.Task] = set()
 
 
 def _ocr_batch_sync(batch: list[str]) -> dict[str, list[dict]]:
@@ -71,7 +73,10 @@ class FileOcrProcessService:
         logger.info(f"case_id={case_id} 多模态提取信息: {raw}")
         return [{"file_path": path, "ocr_text": content} for path, content in raw.items()]
 
-    async def _process_cases(self, processor: Callable, file_hash: str = None, uids: list[str] = None) -> dict[str, Any]:
+    async def _process_cases(self, processor: Callable, file_hash: str = None, uids: list[str] = None, use_multimodal: bool = False) -> dict[str, Any]:
+        if file_hash and await ocr_progress_repository.is_running(file_hash):
+            return {"file_hash": file_hash, "pending_count": 0, "message": "该 file_hash 正在处理中"}
+
         async with CaseAssignmentDetailRepository(db_name="collection_compiler") as repo:
             if uids:
                 condition = and_(M.del_flag == 0, M.uid.in_(uids), M.case_status <= 0)
@@ -83,38 +88,54 @@ class FileOcrProcessService:
         if not pending:
             return {"uids": uids, "file_hash": file_hash, "pending_count": 0}
 
-        for case in pending:
-            file_paths: list[str] = []
-            found = file_search_service.find_files(case.application_code, case.uid)
-            for paths in found.values():
-                file_paths.extend(p for p in paths if not p.lower().endswith(".pdf"))
+        if file_hash:
+            await ocr_progress_repository.start(file_hash, len(pending), use_multimodal)
 
-            if not file_paths:
-                logger.warning(f"case_id={case.id} 未找到可处理文件，设置状态为 4")
-                await _update_status(case.id, 4)
-                continue
+        try:
+            for case in pending:
+                file_paths: list[str] = []
+                found = file_search_service.find_files(case.application_code, case.uid)
+                for paths in found.values():
+                    file_paths.extend(p for p in paths if not p.lower().endswith(".pdf"))
 
-            try:
-                await _update_status(case.id, 1)
-                logger.info(f"case_id={case.id} 处理中，状态更新为 1")
+                if not file_paths:
+                    logger.warning(f"case_id={case.id} 未找到可处理文件，设置状态为 4")
+                    await _update_status(case.id, 4)
+                    if file_hash:
+                        await ocr_progress_repository.inc_no_file(file_hash)
+                    continue
 
-                files = await processor(case.id, file_paths)
-                case_result = {
-                    "case_id": case.id,
-                    "application_code": case.application_code,
-                    "uid": case.uid,
-                    "files": files,
-                }
+                if file_hash:
+                    await ocr_progress_repository.set_current(file_hash, case.id, case.uid, case.application_code)
 
-                task = asyncio.create_task(self._extract_and_log_info(case_result))
-                _background_tasks.add(task)
-                task.add_done_callback(_background_tasks.discard)
+                try:
+                    await _update_status(case.id, 1)
+                    logger.info(f"case_id={case.id} 处理中，状态更新为 1")
 
-                await _update_status(case.id, 2)
-                logger.info(f"case_id={case.id} 处理完成，状态更新为 2")
-            except Exception as e:
-                logger.error(f"case_id={case.id} 处理失败: {e}")
-                await _update_status(case.id, 3)
+                    files = await processor(case.id, file_paths)
+                    case_result = {
+                        "case_id": case.id,
+                        "application_code": case.application_code,
+                        "uid": case.uid,
+                        "files": files,
+                    }
+
+                    task = asyncio.create_task(self._extract_and_log_info(case_result))
+                    _internal_tasks.add(task)
+                    task.add_done_callback(_internal_tasks.discard)
+
+                    await _update_status(case.id, 2)
+                    logger.info(f"case_id={case.id} 处理完成，状态更新为 2")
+                    if file_hash:
+                        await ocr_progress_repository.inc_done(file_hash)
+                except Exception as e:
+                    logger.error(f"case_id={case.id} 处理失败: {e}")
+                    await _update_status(case.id, 3)
+                    if file_hash:
+                        await ocr_progress_repository.inc_failed(file_hash)
+        finally:
+            if file_hash:
+                await ocr_progress_repository.finish(file_hash)
 
         return {"file_hash": file_hash, "uids": uids, "pending_count": len(pending)}
 
@@ -122,13 +143,13 @@ class FileOcrProcessService:
         return await self._process_cases(self._ocr_processor, file_hash=file_hash)
 
     async def process_by_file_hash_multimodal(self, file_hash: str) -> dict[str, Any]:
-        return await self._process_cases(self._multimodal_processor, file_hash=file_hash)
+        return await self._process_cases(self._multimodal_processor, file_hash=file_hash, use_multimodal=True)
 
     async def process_by_uids(self, uids: list[str]) -> dict[str, Any]:
         return await self._process_cases(self._ocr_processor, uids=uids)
 
     async def process_by_uids_multimodal(self, uids: list[str]) -> dict[str, Any]:
-        return await self._process_cases(self._multimodal_processor, uids=uids)
+        return await self._process_cases(self._multimodal_processor, uids=uids, use_multimodal=True)
 
 
 file_ocr_process_service = FileOcrProcessService()
